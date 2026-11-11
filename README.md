@@ -1,200 +1,150 @@
-# Advisory 03 — Stored Cross-Site Scripting (XSS) in `admin/tax_classes.php`
+# Advisory 04 — Stored Cross-Site Scripting (XSS) in Sales Report
 
-**Researcher:** Carolina Malinconico  
-**Instructor:** Carlos Tuma  
-**Course:** Report Profissional de CVE 2.0 — RedScan Academy  
-**Environment:** Modified eCommerce Shopsoftware, local Docker lab
+## Summary
 
-> **Scope:** Reproduced in the training Docker image. Upstream impact and CVE assignment have not been established.
+A stored cross-site scripting (XSS) condition was confirmed in the administrative Sales Report of **modified eCommerce Shopsoftware v3.3.0, revision 16825**, in a local Docker-based test environment. The report renders an order item's stored product name as HTML without context-appropriate output encoding. When a harmless proof-of-concept payload was placed in the `orders_products.products_name` field of a test order and the administrator opened the detailed Sales Report, the browser executed the payload and displayed the expected JavaScript alert.
 
----
+**Scope limitation:** The payload was inserted directly into the local test database. This demonstrates a vulnerable rendering sink and execution of stored JavaScript, **not** an independently verified, remotely reachable injection path. No claim is made that an unauthenticated customer or another lower-privileged actor can control this field in a default installation.
 
-## 1. Summary
+## Tested Environment
 
-Stored Cross-Site Scripting (Stored XSS) was reproduced in the Tax Classes administration feature of the Modified eCommerce Shopsoftware Docker laboratory. User-controlled multilingual tax-class titles and descriptions were saved and later rendered as executable HTML. Benign JavaScript alert dialogs were observed for both fields. This advisory follows the structure of the instructor’s Advisory 03 while adding the researcher’s practical proof-of-concept evidence.
-
-## 2. Identification
-
-| Field | Value |
+| Field | Details |
 |---|---|
-| Product | Modified eCommerce Shopsoftware |
-| Component | Administration — Tax Classes |
-| Affected file / endpoint | admin/tax_classes.php / /admin/tax_classes.php |
-| Version tested | 3.3.0 rev 16825 — training Docker image |
-| Input fields | tax_class_title, tax_class_description |
-| Record selector | tID (specific record ID not established in supplied evidence) |
-| Vulnerability | Stored Cross-Site Scripting (XSS) |
-| CWE | CWE-79 |
-| OWASP | A03:2021 — Injection |
-| CVSS | Not assessed |
-| Environment | Local Docker instance, localhost:8080 |
+| Application | modified eCommerce Shopsoftware |
+| Tested version | 3.3.0, revision 16825 |
+| Component | Administrative Sales Report |
+| Affected page | `admin/stats_sales_report.php` |
+| Related report class | `admin/includes/classes/sales_report.php` |
+| Stored field tested | `orders_products.products_name` |
+| Database record | Local test order `orders_id = 2`, `orders_products_id = 1` |
+| Environment | Local Docker installation, accessed through `http://localhost:8080/` |
+| Weakness category | CWE-79 — Improper Neutralization of Input During Web Page Generation |
+| Validation | Browser JavaScript alert observed in the administrative report |
+| Disclosure status | Laboratory finding; no vendor notification or CVE assignment claimed |
 
-## 3. Analyzed endpoint
+## Technical Description
 
-GET /admin/tax_classes.php
-
-The administrative interface allows authorized users to create, edit, inspect, and delete multilingual tax-class records. The laboratory tests used a dedicated fictitious tax class (Sin Tax) rather than modifying production records.
-
-## 4. Fields involved
-
-Both tax_class_title and tax_class_description are accepted through POST and processed by xtc_db_prepare_input(). Values are combined into language-keyed strings (language::value separated by ||) and saved to TABLE_TAX_CLASS. The analyzed update path includes lines 69–94; the create path includes lines 36–62.
+In the detailed Sales Report view, the application prints a product model and product name directly into an HTML anchor element. The relevant rendering logic is equivalent to:
 
 ```php
-$tax_class_title = xtc_db_prepare_input($_POST['tax_class_title']);
-$tax_class_description = xtc_db_prepare_input($_POST['tax_class_description']);
+<a href="<?php echo xtc_catalog_href_link('product_info.php?products_id=' . $info[$i]['pid']); ?>" target="_blank">
+  <?php echo ((xtc_not_null($info[$i]['pmodel'])) ? $info[$i]['pmodel'] . ' : ' : '') . $info[$i]['pname']; ?>
+</a>
 ```
+
+The values are output without HTML escaping at this rendering point. The same report also prints product attribute labels and values without visible context-appropriate encoding:
 
 ```php
-$tax_class_title_array[] = $key . '::' . $value;
-$tax_class_description_array[] = $key . '::' . $value;
+echo $attr['options'][$x] . ': ' . $attr['options_values'][$x];
 ```
 
-```php
-$tax_class_title = implode('||', $tax_class_title_array);
-$tax_class_description = implode('||', $tax_class_description_array);
+The test confirmed execution through the **product name** field. The product model and attribute fields were identified as additional potentially unsafe output locations through code review, but were **not separately validated** by the proof of concept documented here.
+
+The report obtains order-product details through the Sales Report class, which reads order data from the database. The tested product name was stored in `orders_products.products_name`, rather than being taken directly from a current HTTP query parameter.
+
+## Preconditions and Attack-Surface Limitations
+
+- An administrator or other user authorized to view the detailed Sales Report must load the affected page.
+- A malicious HTML/JavaScript string must already be present in an order-product field consumed by the report.
+- In this proof of concept, the string was inserted through direct database access available only in the local lab.
+- A customer-facing, unauthenticated, or lower-privileged route for storing the string **has not been established**. Practical exploitability and severity depend on whether such a route exists and on the privileges of the person viewing the report.
+
+## Steps to Reproduce — Authorized Local Laboratory
+
+1. Start the local modified eCommerce Shopsoftware v3.3.0 rev 16825 installation.
+2. Create an ordinary test product with model `REDSCAN-001` and a nonzero price.
+3. Place a test order for the product. In the documented run, the order contained two units, used local pickup and cash payment, and completed successfully.
+4. Confirm that the order is visible under **Administration → Sales Report**, with a date range covering the order and a detailed view such as **Details with value**.
+5. Identify the test order-product record. In this run, it was `orders_id = 2` and `orders_products_id = 1`.
+6. In the **local test database only**, set `orders_products.products_name` for that exact record to the following benign alert payload:
+
+   ```html
+   <img src=x onerror=alert("RedScan-XSS")>
+   ```
+
+   Example PHP CLI command for the documented Docker container:
+
+   ```bash
+   docker exec modified-shop-web php -r '
+   require "/var/www/html/includes/configure.php";
+   $db = new mysqli(DB_SERVER, DB_SERVER_USERNAME, DB_SERVER_PASSWORD, DB_DATABASE);
+   $payload = "<img src=x onerror=alert(\"RedScan-XSS\")>";
+   $stmt = $db->prepare("UPDATE orders_products SET products_name = ? WHERE orders_products_id = 1 AND orders_id = 2");
+   $stmt->bind_param("s", $payload);
+   $stmt->execute();
+   echo "Rows updated: " . $stmt->affected_rows . PHP_EOL;
+   '
+   ```
+
+7. Reload `http://localhost:8080/admin/stats_sales_report.php` while authenticated as an administrator, retain the detailed report view, and select **Update**.
+8. Observe the browser alert with the text **`RedScan-XSS`**.
+
+### Observed Result
+
+The browser displayed a JavaScript alert labeled `RedScan-XSS` while rendering the Sales Report. This confirms that the stored product-name value was interpreted as executable markup in the tested administrative page.
+
+### Expected Secure Behavior
+
+The report should display the product name as literal text. For example, the `<img ...>` string should appear as text rather than creating an HTML element or executing an event handler.
+
+## Evidence
+
+The accompanying eight-page document, **`Documento sem título (1).docx`**, contains the laboratory screenshots and code excerpts:
+
+| Page | Evidence |
+|---|---|
+| 1–4 | Inspection of the Sales Report source and unescaped product-name/model and attribute output |
+| 5–7 | Test product setup, checkout configuration, and order confirmation |
+| 8 | Completed order, detailed Sales Report, database record inspection, and the `RedScan-XSS` browser alert |
+
+The final screenshot on page 8 is the decisive runtime evidence. The code review and alert together support the conclusion that the tested report output is vulnerable to stored-script execution when an order-product name contains HTML/JavaScript.
+
+## Potential Impact
+
+If an attacker-controlled value can reach the affected order-product field through an application feature, an administrator viewing the detailed report could execute attacker-supplied JavaScript in the administrative origin. Depending on browser controls, session protections, and application permissions, this could enable unauthorized actions in the administrator's context or access to data exposed to client-side scripts.
+
+**These downstream effects were not tested.** The laboratory demonstrated a JavaScript alert only. No data extraction, privilege escalation, session theft, or remotely accessible injection path was demonstrated.
+
+## Root Cause
+
+The affected HTML output concatenates database-backed product fields directly into the response without encoding for the HTML text context. Storing a value in a database does not make it safe for subsequent HTML rendering.
+
+## Recommended Remediation
+
+1. Apply context-appropriate HTML output encoding to product names, models, and attribute names/values before inserting them into the HTML response. In PHP, a suitable approach for plain HTML text is:
+
+   ```php
+   echo htmlspecialchars((string) $info[$i]['pname'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+   ```
+
+   Ensure that the chosen character encoding matches the application's actual output encoding. Apply the same protection to `pmodel`, attribute option labels, and attribute values.
+2. Audit other administrative views that render order snapshots, product fields, and exported content. CSV exports require separate spreadsheet-formula-injection considerations; HTML escaping alone is not a CSV defense.
+3. Review the data-entry and order-creation paths to establish which roles can influence the stored fields, and apply appropriate validation without relying on input filtering as the primary XSS defense.
+4. Consider a restrictive Content Security Policy as defense in depth, while retaining output encoding as the primary fix.
+5. Add regression tests that store HTML-like text in order-product fields and verify it is displayed literally in all report detail modes.
+
+## Suggested Validation After a Fix
+
+Repeat the local proof of concept using the same test record. The report should display the payload as escaped text and must not produce a JavaScript alert. Recheck the model and attribute display paths independently.
+
+## Cleanup of the Test Record
+
+After collecting evidence, restore the local order-product name:
+
+```bash
+docker exec modified-shop-web php -r '
+require "/var/www/html/includes/configure.php";
+$db = new mysqli(DB_SERVER, DB_SERVER_USERNAME, DB_SERVER_PASSWORD, DB_DATABASE);
+$name = "RedScan XSS Test Product";
+$stmt = $db->prepare("UPDATE orders_products SET products_name = ? WHERE orders_products_id = 1 AND orders_id = 2");
+$stmt->bind_param("s", $name);
+$stmt->execute();
+echo "Rows restored: " . $stmt->affected_rows . PHP_EOL;
+'
 ```
 
-The application then persists the values using xtc_db_perform(TABLE_TAX_CLASS, $sql_data_array, ...).
+Cleanup is provided as a procedure; **its successful execution has not been verified** in the evidence supplied.
 
-## 5. Technical evidence
+## Responsible Disclosure Notes
 
-### 5.1. Title rendering in the list (line 160)
-
-```php
-echo parse_multi_language_value($tax_classes['tax_class_title'], $_SESSION['language_code']);
-```
-
-### 5.2. Title rendering in the details panel (line 238)
-
-```php
-$heading[] = array('text' => '<b>' . parse_multi_language_value($tcInfo->tax_class_title, $_SESSION['language_code']) . '</b>');
-```
-
-### 5.3. Description rendering (line 243)
-
-```php
-$contents[] = array('text' => '<br />' . TEXT_INFO_CLASS_DESCRIPTION . '<br />' . parse_multi_language_value($tcInfo->tax_class_description, $_SESSION['language_code']));
-```
-
-### 5.4. Title rendering in the delete-confirmation view (line 232)
-
-```php
-$contents[] = array('text' => '<br /><b>' . parse_multi_language_value($tcInfo->tax_class_title, $_SESSION['language_code']) . '</b>');
-```
-
-The researcher reported an alert in the deletion workflow; a dedicated screenshot of that confirmation step was not provided. The precise triggering sink in the list/details/edit views has not been isolated by instrumented tracing.
-
-### 5.5. Multilingual decoding helper
-
-The instructor’s source review identifies parse_multi_language_value() in inc/parse_multi_language_value.inc.php, which returns decode_htmlentities() for the selected language. The latter calls html_entity_decode() in inc/html_encoding.php. Decoding entities does not provide safe HTML output encoding.
-
-```php
-return decode_htmlentities($lang_array[$lang_code]);
-// decode_htmlentities():
-return html_entity_decode($string, $flags, $encoding);
-```
-
-### 5.6. Editing form versus display output
-
-The instructor’s analysis notes that xtc_draw_input_field() uses encode_htmlspecialchars(trim($value)) for the input value attribute. This escaping in the edit control does not protect separate HTML-body rendering sinks.
-
-## 6. Practical proof of concept
-
-The following tests were performed in a local, authorized Docker lab. The JavaScript was limited to an alert and did not transmit data externally.
-
-1. Sign in to the administrative interface and open /admin/tax_classes.php.
-2. Create or edit a fictitious tax class; use the Description field for a benign image-error alert payload and save.
-3. Select the record and observe an alert displaying “Teste XSS Carolina”; re-open the record and observe the alert again.
-4. In a separate test, place an analogous alert payload in the Title field and a harmless text value in Description.
-5. Observe the “XSS-Titulo-Carolina” alert in the class interface and while the edit view is open.
-6. The researcher also reported an alert on entering the delete-confirmation workflow; this observation has no separate screenshot.
-```html
-<img src=x onerror=alert('Teste XSS Carolina')>
-<img src=x onerror=alert('XSS-Titulo-Carolina')>
-```
-
-## 7. Root cause
-
-Untrusted, persisted multilingual values are decoded and inserted into HTML without context-appropriate output encoding at the identified sinks. Consequently, an HTML event-handler payload may be interpreted by the browser. Input preparation for database use and escaping of input-field attributes are not substitutes for HTML-body output encoding.
-
-## 8. Potential impact and limitations
-
-A user with permission to modify tax classes could store script-bearing content that runs when another authorized administrator views the affected record. Actual impact depends on role permissions, the page context, and browser defenses. No credential theft, remote exploitation, or impact on an unmodified upstream release was demonstrated. The training image may differ from the official product. No CVE identifier or CVSS score is claimed.
-
-## 9. Recommendations
-
-- Apply context-appropriate output encoding to tax-class titles and descriptions at every HTML rendering sink.
-- For HTML text nodes, use an encoding equivalent to htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8").
-- Review uses of parse_multi_language_value() and html_entity_decode() before HTML output; avoid decoding untrusted data immediately before rendering.
-- Retain authorization controls and add regression tests covering multilingual values and HTML metacharacters.
-- Consider a restrictive Content Security Policy as defense in depth, not as a replacement for escaping.
-- Remove the laboratory alert payloads after capturing evidence.
-## 10. Evidence and validation status
-
-POST input and persistence: Confirmed by source review
-
-Description XSS: Reproduced; screenshot evidence
-
-Title XSS: Reproduced; screenshot evidence
-
-Repeated execution: Observed in laboratory
-
-Edit view alert: Screenshot evidence
-
-Delete confirmation alert: Researcher reported; no dedicated screenshot
-
-Official upstream version affected: Not established
-
-CVE assignment: Not established
-
-## Appendix A — Laboratory screenshots
-
-Images retained from the researcher’s earlier report. Some show initial setup or contextual steps rather than a distinct exploit sink.
-
-### Evidence image 1
-
-![Laboratory evidence evidence-01](images/evidence-01.png)
-
-Source: researcher’s previous laboratory report.
-
-### Evidence image 2
-
-![Laboratory evidence evidence-02](images/evidence-02.png)
-
-Source: researcher’s previous laboratory report.
-
-### Evidence image 3
-
-![Laboratory evidence evidence-03](images/evidence-03.png)
-
-Source: researcher’s previous laboratory report.
-
-### Evidence image 4
-
-![Laboratory evidence evidence-04](images/evidence-04.png)
-
-Source: researcher’s previous laboratory report.
-
-### Evidence image 5
-
-![Laboratory evidence evidence-05](images/evidence-05.png)
-
-Source: researcher’s previous laboratory report.
-
-### Evidence image 6
-
-![Laboratory evidence evidence-06](images/evidence-06.png)
-
-Source: researcher’s previous laboratory report.
-
-### Evidence image 7
-
-![Laboratory evidence evidence-07](images/evidence-07.png)
-
-Source: researcher’s previous laboratory report.
-
-### Evidence image 8
-
-![Laboratory evidence evidence-08](images/evidence-08.png)
-
-Source: researcher’s previous laboratory report.
+This report documents a finding in an isolated, authorized local environment. Before making claims about a broadly exploitable vulnerability, validate whether a lower-privileged or external user can cause malicious content to be stored in the affected order-product fields. Consider contacting the project maintainers privately before publishing exploit details. No CVE ID, CVSS score, vendor acknowledgment, or patch status is asserted here.
