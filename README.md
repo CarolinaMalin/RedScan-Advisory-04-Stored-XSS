@@ -104,23 +104,23 @@ The final screenshot on page 8 is the decisive runtime evidence. The code review
 
 **Order confirmation (test item and model):**
 
-![Test order confirmation](evidence/01-order-confirmation.png)
+![Test order confirmation](images/01-order-confirmation.png)
 
 **Order successfully created:**
 
-![Order success](evidence/02-order-success.png)
+![Order success](images/02-order-success.png)
 
 **Sales Report renders the stored order-product name:**
 
-![Sales report details](evidence/03-sales-report-details.png)
+![Sales report details](images/03-sales-report-details.png)
 
 **Database query identifies the test order-product record:**
 
-![Order product database record](evidence/04-order-database-record.png)
+![Order product database record]images/04-order-database-record.png)
 
 **Confirmed execution — browser alert `RedScan-XSS`:**
 
-![Stored XSS alert confirmed in the Sales Report](evidence/05-stored-xss-alert-confirmed.png)
+![Stored XSS alert confirmed in the Sales Report](images/05-stored-xss-alert-confirmed.png)
 
 ## Potential Impact
 
