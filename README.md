@@ -99,6 +99,29 @@ The accompanying eight-page document, **`Documento sem título (1).docx`**, cont
 
 The final screenshot on page 8 is the decisive runtime evidence. The code review and alert together support the conclusion that the tested report output is vulnerable to stored-script execution when an order-product name contains HTML/JavaScript.
 
+
+### Screenshot evidence (GitHub relative paths)
+
+**Order confirmation (test item and model):**
+
+![Test order confirmation](evidence/01-order-confirmation.png)
+
+**Order successfully created:**
+
+![Order success](evidence/02-order-success.png)
+
+**Sales Report renders the stored order-product name:**
+
+![Sales report details](evidence/03-sales-report-details.png)
+
+**Database query identifies the test order-product record:**
+
+![Order product database record](evidence/04-order-database-record.png)
+
+**Confirmed execution — browser alert `RedScan-XSS`:**
+
+![Stored XSS alert confirmed in the Sales Report](evidence/05-stored-xss-alert-confirmed.png)
+
 ## Potential Impact
 
 If an attacker-controlled value can reach the affected order-product field through an application feature, an administrator viewing the detailed report could execute attacker-supplied JavaScript in the administrative origin. Depending on browser controls, session protections, and application permissions, this could enable unauthorized actions in the administrator's context or access to data exposed to client-side scripts.
